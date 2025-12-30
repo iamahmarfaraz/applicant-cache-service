@@ -1,36 +1,42 @@
 const {
   getOrCreateTenant,
   markTenantRunning,
-  readPage,
+  readPage
 } = require("../cache/applicationCache");
 
 const PAGE_SIZE = 50;
 
 const getApplicants = async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ message: "Token missing" });
+  try {
+    const tenantId = req.auth.tenantId;
+    const allowedUserIds = req.allowedUserIds || [];
+    const cursor = Number(req.query.cursor || 0);
+
+    const tenant = getOrCreateTenant(tenantId);
+
+    if (tenant.syncStatus === "IDLE") {
+      markTenantRunning(tenantId);
+    }
+
+    const result = readPage({
+      tenantId,
+      allowedUserIds,
+      limit: PAGE_SIZE,
+      cursor
+    });
+
+    return res.status(200).json({
+      message: "Get Application View Successful",
+      ...result
+    });
+  } catch (err) {
+    console.error("GetApplicants error:", err);
+    return res.status(500).json({
+      message: "Failed to fetch applications"
+    });
   }
-
-  const token = authHeader.replace("Bearer ", "").trim();
-
-  if (!token) {
-    return res.status(401).json({ message: "Token missing" });
-  }
-
-  const cursor = Number(req.query.cursor || 0);
-
-  const tenant = getOrCreateTenant(token);
-
-  if (tenant.syncStatus === "IDLE") {
-    markTenantRunning(token);
-  }
-
-  const result = readPage(token, PAGE_SIZE, cursor);
-
-  res.json(result);
 };
 
 module.exports = {
-  getApplicants,
+  getApplicants
 };

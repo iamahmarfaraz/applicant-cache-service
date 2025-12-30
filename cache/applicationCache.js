@@ -5,23 +5,20 @@ const SYNC_STATUS = {
   RUNNING: "RUNNING"
 };
 
-function getOrCreateTenant(token) {
-  if (!tenantCacheMap.has(token)) {
-    tenantCacheMap.set(token, {
+function getOrCreateTenant(tenantId) {
+  if (!tenantCacheMap.has(tenantId)) {
+    tenantCacheMap.set(tenantId, {
       parentSellerCode: null,
-      recordsMap: new Map(),
-      recordsList: [],
+      recordsMap: new Map(),   // alertId -> row
+      recordsList: [],         // flat array
       lastSyncTime: null,
       syncStatus: SYNC_STATUS.IDLE,
       lastAccessedAt: Date.now()
     });
   }
 
-  const tenant = tenantCacheMap.get(token);
-
-  // update access time on every use
+  const tenant = tenantCacheMap.get(tenantId);
   tenant.lastAccessedAt = Date.now();
-
   return tenant;
 }
 
@@ -29,21 +26,32 @@ function getAllTenants() {
   return tenantCacheMap;
 }
 
-function markTenantRunning(token) {
-  const tenant = getOrCreateTenant(token);
+function markTenantRunning(tenantId) {
+  const tenant = getOrCreateTenant(tenantId);
   tenant.syncStatus = SYNC_STATUS.RUNNING;
 }
 
-function markTenantIdle(token) {
-  const tenant = getOrCreateTenant(token);
+function markTenantIdle(tenantId) {
+  const tenant = getOrCreateTenant(tenantId);
   tenant.syncStatus = SYNC_STATUS.IDLE;
 }
 
-function mergeRows(token, rows) {
-  const tenant = getOrCreateTenant(token);
+/**
+ * Merge applicant rows into tenant cache
+ * - keyed by alertId
+ * - updates lastSyncTime via luDate
+ */
+function mergeRows(tenantId, rows) {
+  const tenant = getOrCreateTenant(tenantId);
+
+  
+  if (!tenant.__logged && rows.length > 0) {
+    // console.log("SAMPLE APPLICANT ROW:", rows[0]);
+    tenant.__logged = true;
+  }
 
   for (const row of rows) {
-    if (!tenant.parentSellerCode) {
+    if (!tenant.parentSellerCode && row.parentSellerCode) {
       tenant.parentSellerCode = row.parentSellerCode;
     }
 
@@ -71,19 +79,50 @@ function mergeRows(token, rows) {
   }
 }
 
-function readPage(token, limit, cursor) {
-  const tenant = getOrCreateTenant(token);
+/**
+ * READ WITH AUTHORIZZATION--
+ * Rules:
+ * 1. crUserId === 0 → SYSTEM / LEGACY → ALWAYS VISIBLE
+ * 2. crUserId > 0  → must be in allowedUserIds
+ */
+function readPage({
+  tenantId,
+  allowedUserIds,
+  limit,
+  cursor
+}) {
+  const tenant = getOrCreateTenant(tenantId);
+
+  let filtered = tenant.recordsList;
+
+  if (allowedUserIds && allowedUserIds.length > 0) {
+    const allowedSet = new Set(allowedUserIds);
+
+    filtered = filtered.filter(row => {
+      const ownerUserId =
+        row.crUserId ??
+        row.createdBy ??
+        row.createdByUserId ??
+        row.userId ??
+        row.tuserid ??
+        0;
+
+      if (ownerUserId === 0) return true;
+      return allowedSet.has(ownerUserId);
+    });
+  }
 
   const start = cursor || 0;
   const end = start + limit;
 
-  const data = tenant.recordsList.slice(start, end);
-  const nextCursor = end < tenant.recordsList.length ? end : null;
+  const pageData = filtered.slice(start, end);
+  const nextCursor = end < filtered.length ? end : null;
 
   return {
-    data,
+    data: pageData,
     nextCursor,
-    syncStatus: tenant.syncStatus
+    syncStatus: tenant.syncStatus,
+    isPartial: tenant.syncStatus === SYNC_STATUS.RUNNING
   };
 }
 

@@ -25,9 +25,7 @@ async function fetchApplicantsBatch({ token, lastSyncTime }) {
       ]
     );
 
-    const rows = resultSets[0] || [];
-
-    return rows;
+    return resultSets[0] || [];
   } finally {
     connection.release();
   }

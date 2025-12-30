@@ -6,6 +6,7 @@ const {
   mergeRows,
   SYNC_STATUS
 } = require("../cache/applicationCache");
+const { getAnyValidTokenForTenant } = require("../cache/tokenCache");
 
 let cronRunning = false;
 
@@ -17,23 +18,34 @@ function startApplicantCron() {
     try {
       const tenants = getAllTenants();
 
-      for (const [token, tenant] of tenants) {
+      for (const [tenantId, tenant] of tenants) {
         if (tenant.syncStatus !== SYNC_STATUS.RUNNING) continue;
+
+        const token = getAnyValidTokenForTenant(tenantId);
+
+        //console.log("CRON TENANT:", tenantId, "TOKEN:", token);
+
+        if (!token) {
+          markTenantIdle(tenantId);
+          continue;
+        }
 
         const rows = await fetchApplicantsBatch({
           token,
           lastSyncTime: tenant.lastSyncTime
         });
 
-        if (!rows || rows.length === 0) {
-          markTenantIdle(token);
+        //console.log("ROWS FETCHED:", rows.length);
+
+        if (!rows.length) {
+          markTenantIdle(tenantId);
           continue;
         }
 
-        mergeRows(token, rows);
+        mergeRows(tenantId, rows);
 
         if (rows.length < 1000) {
-          markTenantIdle(token);
+          markTenantIdle(tenantId);
         }
       }
     } catch (err) {
